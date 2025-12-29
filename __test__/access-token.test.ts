@@ -1,12 +1,12 @@
 import { setupServer } from "msw/node";
 import { v4 as uuidv4 } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, it } from "vitest";
-import { getAccessToken } from "../src/access-token";
 import {
   edgeApiAuthHandler,
   edgeApiGetCredentialsHandlerResponse400,
   edgeApiGetCredentialsHandlerResponse500,
-} from "./gen/handlers";
+} from "../gen/handlers";
+import { getAccessToken } from "../src/access-token";
 
 const server = setupServer(edgeApiAuthHandler());
 
@@ -54,5 +54,30 @@ describe("getAccessToken", () => {
     await expect(
       getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain),
     ).rejects.toThrowError();
+  });
+
+  it("sends Content-Type: application/json header", async ({ expect }) => {
+    let capturedHeaders: Headers | null = null;
+
+    server.use(
+      edgeApiAuthHandler(async (info) => {
+        capturedHeaders = info.request.headers;
+        return new Response(
+          JSON.stringify({
+            accessToken: "test-token-12345",
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }),
+    );
+
+    await getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain);
+
+    expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
   });
 });

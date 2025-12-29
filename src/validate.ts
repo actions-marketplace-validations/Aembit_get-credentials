@@ -1,4 +1,8 @@
 import { version as uuidVersion, validate as validateUUID } from "uuid";
+import {
+  type CredentialProviderTypes,
+  credentialProviderTypesEnum,
+} from "../gen";
 
 function validateClientId(clientId: string) {
   // Splitting client ID for validating each component
@@ -20,8 +24,10 @@ function validateClientId(clientId: string) {
     throw new Error("Client ID does not appear to be of type GitHub ID token.");
   }
 
-  const id = clientIdComponents[5].trim();
-  if (!validateUUID(id) || uuidVersion(id) !== 4) {
+  if (
+    !validateUUID(clientIdComponents[5]) ||
+    uuidVersion(clientIdComponents[5]) !== 4
+  ) {
     throw new Error("Not a valid token.");
   }
 
@@ -29,15 +35,13 @@ function validateClientId(clientId: string) {
 }
 
 function validateCredentialType(credentialType: string) {
-  enum CredentialTypes {
-    ApiKey = "ApiKey",
-  }
-
   if (
-    !Object.values(CredentialTypes).includes(credentialType as CredentialTypes)
+    !Object.values(credentialProviderTypesEnum).includes(
+      credentialType as CredentialProviderTypes,
+    )
   ) {
     throw new Error(
-      `Invalid or supported credential type. Valid credential types are: ${Object.values(CredentialTypes).join(", ")}`,
+      `Invalid or currently unsupported credential type. Valid credential types are: ${Object.values(credentialProviderTypesEnum).join(", ")}`,
     );
   }
 
@@ -67,4 +71,37 @@ function validateOidcToken(token: string) {
   return;
 }
 
-export { validateClientId, validateCredentialType, validateOidcToken };
+function validateServerPort(port: string): number {
+  if (port.trim() === "") {
+    throw new Error(
+      `Provided server port value cannot be converted to a number: ${port}`,
+    );
+  }
+
+  const portNumber = Number(port);
+
+  if (Number.isNaN(portNumber)) {
+    throw new Error(
+      `Provided server port value cannot be converted to a number: ${port}`,
+    );
+  }
+
+  if (!Number.isInteger(portNumber)) {
+    throw new Error(`Provided server port value must be an integer: ${port}`);
+  }
+
+  if (portNumber < 0 || portNumber > 65535) {
+    throw new Error(
+      `Provided server port value must be in range 0-65535: ${portNumber}`,
+    );
+  }
+
+  return portNumber;
+}
+
+export {
+  validateClientId,
+  validateCredentialType,
+  validateOidcToken,
+  validateServerPort,
+};

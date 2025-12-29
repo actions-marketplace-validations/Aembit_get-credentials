@@ -15,12 +15,12 @@
   "license": "MIT",
   "author": "devops@aembit.io",
   "type": "commonjs",
-  "main": "lib/main.js",
+  "main": "lib/src/main.js",
   "scripts": {
-    "build": "tsc && ncc build",
+    "build": "tsc && ncc build lib/src/main.js -o dist",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:generate": "kubb generate",
+    "generate": "kubb generate",
     "lint": "biome lint",
     "lint:write": "biome lint --write",
     "format": "biome format",
@@ -40,6 +40,7 @@
     "@faker-js/faker": "^10.1.0",
     "@kubb/cli": "^4.7.4",
     "@kubb/core": "^4.7.4",
+    "@kubb/plugin-client": "^4.11.0",
     "@kubb/plugin-faker": "^4.7.4",
     "@kubb/plugin-msw": "^4.7.4",
     "@kubb/plugin-oas": "^4.7.4",
@@ -48,6 +49,7 @@
     "@vitest/coverage-v8": "^4.0.15",
     "msw": "^2.12.4",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.15"
+    "vitest": "^4.0.15",
+    "yaml": "^2.8.2"
   }
 }
