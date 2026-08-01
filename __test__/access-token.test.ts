@@ -1,12 +1,16 @@
+import * as core from "@actions/core";
+import { HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { v4 as uuidv4 } from "uuid";
-import { afterAll, afterEach, beforeAll, describe, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, it, vi } from "vitest";
 import {
   edgeApiAuthHandler,
   edgeApiGetCredentialsHandlerResponse400,
   edgeApiGetCredentialsHandlerResponse500,
-} from "../gen/handlers";
+} from "../gen";
 import { getAccessToken } from "../src/access-token";
+
+vi.mock("@actions/core");
 
 const server = setupServer(edgeApiAuthHandler());
 
@@ -20,7 +24,10 @@ const reqBody = {
 
 describe("getAccessToken", () => {
   beforeAll(() => server.listen());
-  afterEach(() => server.resetHandlers());
+  afterEach(() => {
+    server.resetHandlers();
+    vi.clearAllMocks();
+  });
   afterAll(() => server.close());
 
   it("returns a token when called with valid data", async ({ expect }) => {
@@ -29,6 +36,7 @@ describe("getAccessToken", () => {
       reqBody.clientId,
       reqBody.idToken,
       reqBody.domain,
+      "",
     );
     expect(token).toBe("abcde12345");
   });
@@ -36,14 +44,16 @@ describe("getAccessToken", () => {
   it("throws an error when receiving a 400 response", async ({ expect }) => {
     server.use(edgeApiAuthHandler(edgeApiGetCredentialsHandlerResponse400));
     await expect(
-      getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain),
+      getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain, ""),
     ).rejects.toThrowError();
   });
 
   it("throws an error when receiving a 500 response", async ({ expect }) => {
-    server.use(edgeApiAuthHandler(edgeApiGetCredentialsHandlerResponse500));
+    server.use(
+      edgeApiAuthHandler(() => edgeApiGetCredentialsHandlerResponse500({})),
+    );
     await expect(
-      getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain),
+      getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain, ""),
     ).rejects.toThrowError();
   });
 
@@ -52,7 +62,7 @@ describe("getAccessToken", () => {
   }) => {
     server.use(edgeApiAuthHandler({ accessToken: undefined }));
     await expect(
-      getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain),
+      getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain, ""),
     ).rejects.toThrowError();
   });
 
@@ -76,8 +86,91 @@ describe("getAccessToken", () => {
       }),
     );
 
-    await getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain);
+    await getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain, "");
 
-    expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
+    expect((capturedHeaders as unknown as Headers).get("Content-Type")).toBe(
+      "application/json",
+    );
   });
+
+  it("sends X-Aembit-ResourceSet header when resourceSetId is provided", async ({
+    expect,
+  }) => {
+    let capturedHeaders: Headers | null = null;
+    const customResourceSetId = uuidv4();
+
+    server.use(
+      edgeApiAuthHandler(async (info) => {
+        capturedHeaders = info.request.headers;
+        return new Response(
+          JSON.stringify({
+            accessToken: "test-token-12345",
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }),
+    );
+
+    await getAccessToken(
+      reqBody.clientId,
+      reqBody.idToken,
+      reqBody.domain,
+      customResourceSetId,
+    );
+
+    expect(
+      (capturedHeaders as unknown as Headers).get("X-Aembit-ResourceSet"),
+    ).toBe(customResourceSetId);
+  });
+
+  it(
+    "retries and succeeds when the first attempt throws a network error",
+    { timeout: 10000 },
+    async ({ expect }) => {
+      vi.mocked(core.debug).mockImplementation(() => {});
+
+      let attempt = 0;
+      server.use(
+        edgeApiAuthHandler(() => {
+          attempt++;
+          if (attempt === 1) {
+            return HttpResponse.error();
+          }
+          return new Response(
+            JSON.stringify({ accessToken: "retried-token" }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }),
+      );
+
+      const token = await getAccessToken(
+        reqBody.clientId,
+        reqBody.idToken,
+        reqBody.domain,
+        "",
+      );
+
+      expect(token).toBe("retried-token");
+      expect(attempt).toBe(2);
+    },
+  );
+
+  it(
+    "throws after exhausting all retry attempts on persistent network errors",
+    { timeout: 10000 },
+    async ({ expect }) => {
+      vi.mocked(core.debug).mockImplementation(() => {});
+
+      server.use(edgeApiAuthHandler(() => HttpResponse.error()));
+
+      await expect(
+        getAccessToken(reqBody.clientId, reqBody.idToken, reqBody.domain, ""),
+      ).rejects.toThrowError(/Failed to fetch access token after 3 attempts/);
+    },
+  );
 });

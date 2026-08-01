@@ -53845,6 +53845,14 @@ module.exports = require("node:stream");
 
 /***/ }),
 
+/***/ 8500:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:timers/promises");
+
+/***/ }),
+
 /***/ 7975:
 /***/ ((module) => {
 
@@ -54603,36 +54611,57 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getAccessToken = getAccessToken;
+const promises_1 = __nccwpck_require__(8500);
 const core = __importStar(__nccwpck_require__(7484));
-const edgeApiAuth_1 = __nccwpck_require__(8347);
-function getAccessToken(clientId, identityToken, domain) {
+const gen_1 = __nccwpck_require__(3420);
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 1000;
+function getAccessToken(clientId, identityToken, domain, resourceSetId) {
     return __awaiter(this, void 0, void 0, function* () {
         const tenantId = clientId.split(":")[2];
         const url = `https://${tenantId}.ec.${domain}`;
-        core.info(`Fetch access token (url): ${url}/edge/v1/auth`);
-        // Request an access token from Aembit Edge server
-        const response = yield (0, edgeApiAuth_1.edgeApiAuth)({
-            clientId: clientId,
-            client: {
-                github: {
-                    identityToken: identityToken,
-                },
-            },
-        }, undefined, {
-            baseURL: url,
-            headers: {
-                "Content-Type": "application/json",
-            },
-        });
-        core.info(`Response status: ${response.status}`);
-        if (response.status !== 200) {
-            throw new Error(`Failed to fetch access token: ${response.statusText}`);
+        core.info(`Fetching access token from ${url}/edge/v1/auth`);
+        core.debug(`Access token request: clientId=${clientId}, resourceSetId=${resourceSetId}`);
+        let lastError;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            if (attempt > 1) {
+                core.debug(`Retrying access token fetch (attempt ${attempt}/${MAX_ATTEMPTS}) after ${RETRY_DELAY_MS}ms`);
+                yield (0, promises_1.setTimeout)(RETRY_DELAY_MS);
+            }
+            let response;
+            try {
+                response = yield (0, gen_1.edgeApiAuth)({
+                    clientId: clientId,
+                    client: {
+                        github: {
+                            identityToken: identityToken,
+                        },
+                    },
+                }, resourceSetId ? { "X-Aembit-ResourceSet": resourceSetId } : undefined, {
+                    baseURL: url,
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                });
+            }
+            catch (err) {
+                core.debug(`Attempt ${attempt}/${MAX_ATTEMPTS}: error fetching access token. Error: ${err instanceof Error ? err.message : String(err)}`);
+                lastError = err;
+                continue;
+            }
+            core.info(`Access token response status: ${response.status}`);
+            core.debug(`Access token response statusText: ${response.statusText}`);
+            if (response.status !== 200) {
+                throw new Error(`Failed to fetch access token: ${response.statusText}`);
+            }
+            const data = response.data;
+            if (!data || typeof data.accessToken !== "string") {
+                throw new Error("Invalid response: missing accessToken");
+            }
+            core.debug("Access token received successfully");
+            return data.accessToken;
         }
-        const data = response.data;
-        if (!data || typeof data.accessToken !== "string") {
-            throw new Error("Invalid response: missing accessToken");
-        }
-        return data.accessToken;
+        throw new Error(`Failed to fetch access token after ${MAX_ATTEMPTS} attempts. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
     });
 }
 
@@ -54689,42 +54718,70 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getCredential = getCredential;
 exports.setOutputs = setOutputs;
+const promises_1 = __nccwpck_require__(8500);
 const core = __importStar(__nccwpck_require__(7484));
 const gen_1 = __nccwpck_require__(3420);
 const validate_1 = __nccwpck_require__(2540);
-function getCredential(credentialType, clientId, identityToken, accessToken, domain, serverHost, serverPort) {
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 1000;
+function isJsonParseError(error) {
+    return (error instanceof SyntaxError && error.message.toLowerCase().includes("json"));
+}
+function getCredential(credentialType, clientId, identityToken, accessToken, domain, serverHost, serverPort, resourceSetId) {
     return __awaiter(this, void 0, void 0, function* () {
         const tenantId = clientId.split(":")[2];
         const url = `https://${tenantId}.ec.${domain}`;
-        core.info(`Fetch Credential (url): ${url}/edge/v1/credentials`);
-        const response = yield (0, gen_1.edgeApiGetCredentials)({
-            client: {
-                github: {
-                    identityToken: identityToken,
+        core.info(`Fetching credential from ${url}/edge/v1/credentials`);
+        core.debug(`Credential request: credentialType=${credentialType}, serverHost=${serverHost}, serverPort=${serverPort}, resourceSetId=${resourceSetId}`);
+        let lastError;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            if (attempt > 1) {
+                core.debug(`Retrying credential fetch (attempt ${attempt}/${MAX_ATTEMPTS}) after ${RETRY_DELAY_MS}ms`);
+                yield (0, promises_1.setTimeout)(RETRY_DELAY_MS);
+            }
+            const result = yield (0, gen_1.edgeApiGetCredentials)({
+                client: {
+                    github: {
+                        identityToken: identityToken,
+                    },
                 },
-            },
-            server: {
-                host: serverHost,
-                port: serverPort,
-            },
-            credentialType: credentialType,
-        }, undefined, {
-            baseURL: url,
-            headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-            },
-        });
-        core.info(`Response status: ${response.status}`);
-        if (response.status !== 200) {
-            throw new Error(`Failed to fetch access token: ${response.statusText}`);
+                server: {
+                    host: serverHost,
+                    port: serverPort,
+                },
+                credentialType: credentialType,
+            }, resourceSetId ? { "X-Aembit-ResourceSet": resourceSetId } : undefined, {
+                baseURL: url,
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+            }).then((res) => ({ ok: true, response: res }), (err) => {
+                if (!isJsonParseError(err))
+                    throw err;
+                return { ok: false, error: err };
+            });
+            if (!result.ok) {
+                core.debug(`Attempt ${attempt}/${MAX_ATTEMPTS}: received a JSON parse error from the credential endpoint. The response body may be empty or malformed. Error: ${result.error.message}`);
+                lastError = result.error;
+                continue;
+            }
+            const response = result.response;
+            core.info(`Credential response status: ${response.status}`);
+            core.debug(`Credential response statusText: ${response.statusText}`);
+            if (response.status !== 200) {
+                throw new Error(`Failed to fetch credential: ${response.statusText}`);
+            }
+            const credentialData = response.data;
+            core.debug(`Credential response credentialType: ${credentialData.credentialType}`);
+            (0, validate_1.validateCredentialType)(credentialData.credentialType || "");
+            if (!credentialData.data) {
+                throw new Error(`No credential values were included in the server response.`);
+            }
+            core.debug("Credential data received and validated successfully");
+            return credentialData;
         }
-        const credentialData = response.data;
-        (0, validate_1.validateCredentialType)(credentialData.credentialType || "");
-        if (!credentialData.data) {
-            throw new Error(`No credential values were included in the server response.`);
-        }
-        return credentialData;
+        throw new Error(`Failed to parse the credential response after ${MAX_ATTEMPTS} attempts: received an empty or malformed JSON body. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
     });
 }
 function setOutputs(credentialType, credential) {
@@ -54845,12 +54902,14 @@ function getIdentityToken(clientId, domain) {
     return __awaiter(this, void 0, void 0, function* () {
         const tenantId = clientId.split(":")[2];
         const url = `https://${tenantId}.id.${domain}`;
-        core.info(`Fetching token ID for ${url}`);
+        core.info(`Fetching identity token for ${url}`);
+        core.debug(`Identity token audience: ${url}`);
         // Request an OpenID Connect (OIDC) token from GitHub's OIDC provider
         const metadata = yield core.getIDToken(url);
         const identityToken = Buffer.from(metadata).toString("utf-8");
         // Validate that the token is a valid JWT format
         (0, validate_1.validateOidcToken)(identityToken);
+        core.debug("Identity token received and validated successfully");
         return identityToken;
     });
 }
@@ -54923,9 +54982,11 @@ function run() {
             const domain = core.getInput("domain");
             const serverHost = core.getInput("server-host");
             const serverPort = core.getInput("server-port");
+            const resourceSetId = core.getInput("resource-set-id");
             const credentialType = core.getInput("credential-type", {
                 required: true,
             });
+            core.debug(`Inputs: domain=${domain}, serverHost=${serverHost}, serverPort=${serverPort}, resourceSetId=${resourceSetId}, credentialType=${credentialType}`);
             (0, validate_1.validateClientId)(clientId);
             core.info("Client ID is valid ✅");
             // Validate Credential Type
@@ -54934,13 +54995,17 @@ function run() {
             const serverPortNum = (0, validate_1.validateServerPort)(serverPort);
             // Get Identity Token
             const identityToken = yield (0, identity_token_1.getIdentityToken)(clientId, domain);
+            core.info("Identity token obtained ✅");
             // Get Access Token
-            const accessToken = yield (0, access_token_1.getAccessToken)(clientId, identityToken, domain);
-            const credentialData = yield (0, credential_1.getCredential)(credentialType, clientId, identityToken, accessToken, domain, serverHost, serverPortNum);
+            const accessToken = yield (0, access_token_1.getAccessToken)(clientId, identityToken, domain, resourceSetId);
+            core.info("Access token obtained ✅");
+            const credentialData = yield (0, credential_1.getCredential)(credentialType, clientId, identityToken, accessToken, domain, serverHost, serverPortNum, resourceSetId);
             (0, credential_1.setOutputs)(credentialData.credentialType, credentialData.data);
+            core.info("Credential outputs set ✅");
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            core.debug(`Action failed with error: ${message}`);
             core.setFailed(message);
         }
     });
